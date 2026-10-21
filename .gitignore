@@ -1,0 +1,16 @@
+# Go build outputs
+/bin/
+*.exe
+*.test
+*.out
+
+# Go coverage files
+coverage.txt
+coverage.html
+
+# Local Go build cache
+/.gocache/
+
+# Local assets and skills
+/assets/
+/skills/
