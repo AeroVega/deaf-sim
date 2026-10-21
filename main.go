@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,7 +30,7 @@ import (
 const (
 	windowWidth      = 1180
 	windowHeight     = 920
-	bandSliderHeight = 180
+	bandSliderHeight = 88
 )
 
 type commandLineOptions struct {
@@ -101,12 +103,20 @@ type appUI struct {
 	timeLabel             *widget.Label
 	progress              *widget.ProgressBar
 	clipSelector          *clipRangeSelector
-	clipStartLabel        *widget.Label
-	clipEndLabel          *widget.Label
+	clipStartEntry        *widget.Entry
+	clipEndEntry          *widget.Entry
 	clipLengthLabel       *widget.Label
+	clipTimelineEnd       *widget.Label
 	clipAvailabilityLabel *widget.Label
 	clipNameEntry         *widget.Entry
+	previewClipButton     *widget.Button
 	exportClipButton      *widget.Button
+	demoSelect            *widget.Select
+	loadDemoButton        *widget.Button
+	demoPaths             map[string]string
+	outputLevelSlider     *widget.Slider
+	outputLevelLabel      *widget.Label
+	outputLevelDB         float64
 	bandCards             *fyne.Container
 	analysisView          *analysisView
 	leftMeter, rightMeter *widget.ProgressBar
@@ -121,6 +131,8 @@ type appUI struct {
 	tinnitusLabel          *widget.Label
 	hearingLoss            HearingLossProfile
 	hearingLabel           *widget.Label
+	hearingProfileName     string
+	tinnitusProfileName    string
 	severitySlider         *widget.Slider
 	tinnitusSeveritySlider *widget.Slider
 	updatingControls       bool
@@ -135,8 +147,9 @@ type appUI struct {
 
 func newAppUI(window fyne.Window, bufferDuration time.Duration) *appUI {
 	ui := &appUI{
-		window:      window,
-		updatesDone: make(chan struct{}),
+		window:        window,
+		updatesDone:   make(chan struct{}),
+		outputLevelDB: -12,
 	}
 	ui.engine = newAudioEngine(bufferDuration, func() {
 		if ui.closed.Load() {
@@ -156,22 +169,39 @@ func newAppUI(window fyne.Window, bufferDuration time.Duration) *appUI {
 	ui.formatLabel = widget.NewLabel("Choose a WAV recording to begin")
 	ui.formatLabel.Importance = widget.LowImportance
 	ui.statusLabel = widget.NewLabel("Ready when you are.")
+	ui.statusLabel.Truncation = fyne.TextTruncateEllipsis
 	ui.timeLabel = widget.NewLabel("00:00 / 00:00")
 	ui.tinnitusLabel = newCaptionLabel("Off · no tinnitus layer")
+	ui.tinnitusLabel.Wrapping = fyne.TextWrapWord
 	ui.hearingLabel = newCaptionLabel("Off · no hearing-loss profile")
+	ui.hearingLabel.Wrapping = fyne.TextWrapWord
 	ui.progress = widget.NewProgressBar()
+	ui.progress.TextFormatter = func() string { return "" }
 	ui.clipSelector = newClipRangeSelector()
-	ui.clipStartLabel = newCaptionLabel("Start 00.00 s")
-	ui.clipEndLabel = newCaptionLabel("End 00.00 s")
+	ui.clipStartEntry = widget.NewEntry()
+	ui.clipStartEntry.SetText("0.00")
+	ui.clipStartEntry.SetPlaceHolder("0.00")
+	ui.clipStartEntry.OnSubmitted = func(string) { ui.applyClipTimeEntries() }
+	ui.clipEndEntry = widget.NewEntry()
+	ui.clipEndEntry.SetText("0.00")
+	ui.clipEndEntry.SetPlaceHolder("30.00")
+	ui.clipEndEntry.OnSubmitted = func(string) { ui.applyClipTimeEntries() }
 	ui.clipLengthLabel = newCaptionLabel("Length 00.00 s")
+	ui.clipTimelineEnd = newCaptionLabel("00:00")
 	ui.clipAvailabilityLabel = newCaptionLabel("Select between 10 and 30 seconds from the full recording.")
 	ui.clipNameEntry = widget.NewEntry()
 	ui.clipNameEntry.SetPlaceHolder("deaf-sim-clip")
 	ui.clipNameEntry.SetText("deaf-sim-clip")
+	ui.previewClipButton = widget.NewButtonWithIcon("Preview selection", theme.MediaPlayIcon(), func() {
+		ui.previewClipSelection()
+	})
+	ui.previewClipButton.Importance = widget.LowImportance
 	ui.exportClipButton = widget.NewButtonWithIcon("Export .wav", theme.DocumentSaveIcon(), func() {
 		ui.showClipExportSave()
 	})
 	ui.exportClipButton.Importance = widget.HighImportance
+	ui.buildDemoControls()
+	ui.buildOutputLevelControl()
 	ui.clipSelector.OnChanged = func(startFrame, endFrame int) {
 		ui.updateClipLabels(startFrame, endFrame)
 	}
@@ -204,11 +234,117 @@ func newAppUI(window fyne.Window, bufferDuration time.Duration) *appUI {
 	ui.buildSliders()
 	ui.buildModelControls()
 	ui.analysisView = newAnalysisView(ui.engine.analysisSnapshot)
-	ui.analysisView.raster.SetMinSize(fyne.NewSize(760, 170))
+	ui.analysisView.raster.SetMinSize(fyne.NewSize(520, 110))
 	ui.leftMeter, ui.rightMeter = widget.NewProgressBar(), widget.NewProgressBar()
+	ui.leftMeter.TextFormatter = func() string { return "" }
+	ui.rightMeter.TextFormatter = func() string { return "" }
 	ui.leftLevel, ui.rightLevel = widget.NewLabel("-∞ dBFS"), widget.NewLabel("-∞ dBFS")
 	ui.refreshPlaybackUI()
 	return ui
+}
+
+type demoRecording struct {
+	label string
+	path  string
+}
+
+func (ui *appUI) buildDemoControls() {
+	demos := discoverDemoRecordings()
+	options := make([]string, 0, len(demos))
+	ui.demoPaths = make(map[string]string, len(demos))
+	for _, demo := range demos {
+		options = append(options, demo.label)
+		ui.demoPaths[demo.label] = demo.path
+	}
+	ui.demoSelect = widget.NewSelect(options, func(string) {
+		if ui.loadDemoButton != nil {
+			ui.loadDemoButton.Enable()
+		}
+	})
+	ui.demoSelect.PlaceHolder = "Try a sample recording"
+	ui.loadDemoButton = widget.NewButtonWithIcon("Load sample", theme.MediaPlayIcon(), func() {
+		if path := ui.demoPaths[ui.demoSelect.Selected]; path != "" {
+			ui.loadPath(path)
+		}
+	})
+	ui.loadDemoButton.Importance = widget.LowImportance
+	if len(demos) == 0 {
+		ui.demoSelect.PlaceHolder = "No bundled samples found"
+		ui.demoSelect.Disable()
+		ui.loadDemoButton.Disable()
+	} else {
+		ui.loadDemoButton.Disable()
+	}
+}
+
+func discoverDemoRecordings() []demoRecording {
+	executablePath, _ := os.Executable()
+	candidates := []string{
+		filepath.Join("assets", "audio"),
+		filepath.Join(filepath.Dir(executablePath), "assets", "audio"),
+		filepath.Join(filepath.Dir(executablePath), "..", "assets", "audio"),
+	}
+	for _, directory := range candidates {
+		entries, err := os.ReadDir(directory)
+		if err != nil {
+			continue
+		}
+		demos := make([]demoRecording, 0, len(entries))
+		for _, entry := range entries {
+			if entry.IsDir() || !equalFoldExtension(entry.Name(), ".wav") {
+				continue
+			}
+			path, err := filepath.Abs(filepath.Join(directory, entry.Name()))
+			if err != nil {
+				continue
+			}
+			name := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+			name = strings.ReplaceAll(name, "-", " ")
+			if name == "" {
+				continue
+			}
+			name = strings.ToUpper(name[:1]) + name[1:]
+			demos = append(demos, demoRecording{label: name, path: path})
+		}
+		if len(demos) > 0 {
+			sort.Slice(demos, func(i, j int) bool { return demos[i].label < demos[j].label })
+			return demos
+		}
+	}
+	return nil
+}
+
+func (ui *appUI) buildOutputLevelControl() {
+	ui.outputLevelLabel = newCaptionLabel("Playback trim · −12 dB")
+	ui.outputLevelSlider = widget.NewSlider(-24, 0)
+	ui.outputLevelSlider.Step = 1
+	ui.outputLevelSlider.Value = ui.outputLevelDB
+	ui.outputLevelSlider.OnChanged = func(levelDB float64) {
+		ui.outputLevelDB = levelDB
+		ui.outputLevelLabel.SetText(fmt.Sprintf("Playback trim · %+.0f dB", levelDB))
+		if err := ui.engine.setOutputLevel(levelDB); err != nil {
+			ui.showError(err)
+		}
+	}
+}
+
+func (ui *appUI) applyClipTimeEntries() {
+	snapshot := ui.engine.snapshot()
+	sampleRate := int(snapshot.format.SampleRate)
+	if sampleRate <= 0 {
+		return
+	}
+	start, startErr := strconv.ParseFloat(strings.TrimSpace(ui.clipStartEntry.Text), 64)
+	end, endErr := strconv.ParseFloat(strings.TrimSpace(ui.clipEndEntry.Text), 64)
+	if startErr != nil || endErr != nil || !isFinite(start) || !isFinite(end) || start < 0 || end < 0 {
+		ui.statusLabel.SetText("Enter valid start and end times in seconds, then press Enter.")
+		return
+	}
+	startFrame := int(math.Round(start * float64(sampleRate)))
+	endFrame := int(math.Round(end * float64(sampleRate)))
+	startFrame, endFrame = ui.clipSelector.normalizeSelection(startFrame, endFrame)
+	ui.clipSelector.SetSelection(startFrame, endFrame)
+	ui.updateClipLabels(startFrame, endFrame)
 }
 
 func (ui *appUI) buildModelControls() {
@@ -279,16 +415,18 @@ func (ui *appUI) buildSliders() {
 		bandCards = append(bandCards, card)
 	}
 
-	ui.bandCards = container.NewGridWithColumns(len(equalizerFrequencies), bandCards...)
+	ui.bandCards = container.NewGridWithColumns(5, bandCards...)
 }
 
 func (ui *appUI) content() fyne.CanvasObject {
 	openButton := widget.NewButtonWithIcon("Choose recording", theme.FolderOpenIcon(), func() { ui.showAudioChooser() })
 	openButton.Importance = widget.HighImportance
-	fileRow := container.NewBorder(nil, nil, openButton, nil, ui.fileLabel)
+	fileRow := container.NewHBox(openButton, ui.demoSelect, ui.loadDemoButton)
 	playbackButtons := container.NewHBox(ui.playButton, ui.pauseButton, ui.stopButton)
-	sourceContent := container.NewVBox(fileRow, playbackButtons, ui.formatLabel)
-	sourceCard := newSurfaceCard("1 · Choose a recording", "Start with speech or music, then listen at a comfortable volume.", sourceContent)
+	outputLevelRow := container.NewBorder(nil, nil, ui.outputLevelLabel, nil, ui.outputLevelSlider)
+	playbackAndLevel := container.NewGridWithColumns(2, playbackButtons, outputLevelRow)
+	sourceContent := container.NewVBox(fileRow, ui.fileLabel, playbackAndLevel, ui.formatLabel)
+	sourceCard := newSurfaceCard("Choose a recording", "Starts 12 dB below the recording; adjust to a comfortable listening level.", sourceContent)
 
 	savePreset := widget.NewButtonWithIcon("Save profile", theme.DocumentSaveIcon(), func() { ui.showPresetSave() })
 	hearingPresets := widget.NewButtonWithIcon("Hearing-loss presets", theme.DocumentIcon(), func() { ui.showPresetLibrary("hearing-loss") })
@@ -297,60 +435,73 @@ func (ui *appUI) content() fyne.CanvasObject {
 	resetAll := widget.NewButtonWithIcon("Reset EQ", theme.ViewRefreshIcon(), func() { ui.resetAll() })
 	savePreset.Importance, loadPreset.Importance, resetAll.Importance = widget.LowImportance, widget.LowImportance, widget.LowImportance
 	hearingPresets.Importance, tinnitusPresets.Importance = widget.HighImportance, widget.HighImportance
-	profileActions := container.NewHBox(hearingPresets, tinnitusPresets, savePreset, loadPreset, resetAll)
-	hearingDescription := newBodyLabel("Hearing loss can change what is audible and how loudness grows. This control scales the selected profile across all frequencies.")
+	profileActions := container.NewHBox(savePreset, loadPreset, resetAll)
+	hearingDescription := newBodyLabel("Explore changes in audibility, detail, and loudness.")
 	hearingControl := container.NewBorder(ui.hearingLabel, nil, widget.NewLabel("Severity"), nil, ui.severitySlider)
-	hearingColumn := container.NewVBox(newSectionLabel("Hearing loss"), hearingDescription, hearingControl)
-	tinnitusDescription := newBodyLabel("Tinnitus can be tonal, noise-like, layered, or fluctuating. This control scales the selected sound profile without claiming to reproduce anyone’s experience.")
+	hearingColumn := container.NewVBox(newSectionLabel("Hearing loss"), hearingDescription, hearingControl, hearingPresets)
+	tinnitusDescription := newBodyLabel("Explore tonal, noise-like, or fluctuating sound layers.")
 	tinnitusControl := container.NewBorder(ui.tinnitusLabel, nil, widget.NewLabel("Severity"), nil, ui.tinnitusSeveritySlider)
-	tinnitusColumn := container.NewVBox(newSectionLabel("Tinnitus"), tinnitusDescription, tinnitusControl)
+	tinnitusColumn := container.NewVBox(newSectionLabel("Tinnitus"), tinnitusDescription, tinnitusControl, tinnitusPresets)
 	modelColumns := container.NewGridWithColumns(2, hearingColumn, tinnitusColumn)
 	modelContent := container.NewVBox(modelColumns, profileActions)
-	modelCard := newSurfaceCard("2 · Explore two listening layers", "Use the large controls first; use the frequency sliders below for fine adjustments.", modelContent)
+	modelCard := newSurfaceCard("Explore listening layers", "Choose one or both profiles, then adjust their strength.", modelContent)
 
-	clipSelectionLabels := container.NewGridWithColumns(3, ui.clipStartLabel, ui.clipEndLabel, ui.clipLengthLabel)
-	clipNameRow := container.NewBorder(widget.NewLabel("File name"), nil, nil, ui.exportClipButton, ui.clipNameEntry)
+	startTimeField := container.NewBorder(widget.NewLabel("Start (seconds)"), nil, nil, nil, ui.clipStartEntry)
+	endTimeField := container.NewBorder(widget.NewLabel("End (seconds)"), nil, nil, nil, ui.clipEndEntry)
+	clipSelectionLabels := container.NewGridWithColumns(3, startTimeField, endTimeField, ui.clipLengthLabel)
+	clipTimeline := container.NewBorder(nil, nil, newCaptionLabel("0:00"), ui.clipTimelineEnd, nil)
+	clipActions := container.NewHBox(ui.previewClipButton, ui.exportClipButton)
+	clipNameRow := container.NewBorder(widget.NewLabel("File name"), nil, nil, clipActions, ui.clipNameEntry)
 	clipContent := container.NewVBox(
-		newBodyLabel("Choose a short passage to share or discuss. Drag the start and end handles independently; exports are limited to 30 seconds and include the current listening settings."),
+		newBodyLabel("Select 10–30 seconds. Drag the range or enter exact start and end times."),
 		ui.clipSelector,
+		clipTimeline,
 		clipSelectionLabels,
 		ui.clipAvailabilityLabel,
 		clipNameRow,
-		newCaptionLabel("The first 5 seconds stay dry for comparison; simulation begins after that. This creates a new WAV copy. Your original recording is not changed."),
+		newCaptionLabel("A new WAV is created; your original stays unchanged."),
 	)
-	clipCard := newSurfaceCard("3 · Export a listening clip", "Create a compact example of the perspective you explored.", clipContent)
+	clipCard := newSurfaceCard("Export a clip · optional", "", clipContent)
 
-	meters := container.NewGridWithColumns(4, newCaptionLabel("Left"), ui.leftMeter, newCaptionLabel("Right"), ui.rightMeter)
-	viewLabel := newCaptionLabel("Waveform / spectrum")
+	leftMeter := container.NewVBox(
+		container.NewBorder(nil, nil, newCaptionLabel("Left"), ui.leftLevel, nil),
+		ui.leftMeter,
+	)
+	rightMeter := container.NewVBox(
+		container.NewBorder(nil, nil, newCaptionLabel("Right"), ui.rightLevel, nil),
+		ui.rightMeter,
+	)
+	meters := container.NewGridWithColumns(2, leftMeter, rightMeter)
+	viewLabel := newCaptionLabel("Waveform · blue = left · orange = right · spectrum = green")
 	viewLabel.Alignment = fyne.TextAlignCenter
-	levelReadout := container.NewBorder(ui.leftLevel, ui.rightLevel, nil, nil, viewLabel)
-	analysisPanel := container.NewVBox(meters, levelReadout, ui.analysisView)
-	analysisCard := newSurfaceCard("4 · Listen and observe", "The meters and graph show the processed signal, not a clinical hearing measurement.", analysisPanel)
-	eqHint := newBodyLabel("Each band controls a frequency region. Lowering a band makes that region less prominent; the profile controls above can move the whole curve together.")
-	eqContent := container.NewVBox(eqHint, container.NewHScroll(container.NewPadded(ui.bandCards)))
+	analysisPanel := container.NewVBox(meters, viewLabel, ui.analysisView)
+	analysisCard := newSurfaceCard("Listen and observe", "Meters and graph show processed audio, not a clinical measurement.", analysisPanel)
+	eqHint := newBodyLabel("Hearing-loss strength shifts the curve; each slider adjusts one frequency band.")
+	eqContent := container.NewVBox(eqHint, container.NewPadded(ui.bandCards))
 	eqCard := newSurfaceCard("Fine-tune the frequency curve", "Adjust individual bands after exploring a profile.", eqContent)
-	center := container.NewVSplit(analysisCard, eqCard)
-	center.Offset = 0.48
 
-	headerCopy := newBodyLabel("Explore how recorded speech and music can change with hearing loss and tinnitus. This is an educational listening experience—not a diagnosis.")
-	empathyNote := newCaptionLabel("No simulation can reproduce a person’s lived experience. Use what you notice here as a starting point for more accessible, patient communication.")
-	headerCard := newSurfaceCard("Listen with a different perspective", "Deaf Sim · educational listening lab", container.NewVBox(headerCopy, empathyNote))
+	headerTitle := widget.NewLabelWithStyle("Listen with a different perspective", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	headerTitle.SizeName = theme.SizeNameSubHeadingText
+	headerNote := newCaptionLabel("Load a recording → choose a profile → listen and adjust. Export is optional; no simulation represents everyone’s lived experience.")
 	aboutButton := widget.NewButtonWithIcon("About this experience", theme.InfoIcon(), func() { ui.showAbout() })
 	aboutButton.Importance = widget.LowImportance
-	headerActions := container.NewBorder(nil, nil, nil, aboutButton, nil)
-	headerContent := container.NewVBox(headerCard, headerActions)
-	top := container.NewPadded(container.NewVBox(headerContent, sourceCard, modelCard, clipCard))
-	progressRow := container.NewBorder(ui.timeLabel, nil, nil, nil, ui.statusLabel)
-	bottom := container.NewVBox(ui.progress, progressRow)
-	body := container.NewVScroll(container.NewVBox(top, center))
-	return container.NewBorder(nil, bottom, nil, nil, body)
+	header := container.NewBorder(nil, nil, nil, aboutButton, container.NewPadded(container.NewVBox(headerTitle, headerNote)))
+	leftColumn := container.NewVBox(sourceCard, modelCard, clipCard)
+	rightColumn := container.NewVBox(analysisCard, eqCard)
+	columns := container.NewHSplit(container.NewPadded(leftColumn), container.NewPadded(rightColumn))
+	columns.Offset = 0.44
+	bottom := container.NewBorder(nil, nil, ui.timeLabel, ui.statusLabel, ui.progress)
+	return container.NewBorder(header, bottom, nil, nil, columns)
 }
 
 func newSurfaceCard(title, subtitle string, content fyne.CanvasObject) fyne.CanvasObject {
 	titleLabel := widget.NewLabelWithStyle(title, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	titleLabel.SizeName = theme.SizeNameSubHeadingText
-	subtitleLabel := newCaptionLabel(subtitle)
-	header := container.NewVBox(titleLabel, subtitleLabel)
+	headerItems := []fyne.CanvasObject{titleLabel}
+	if strings.TrimSpace(subtitle) != "" {
+		headerItems = append(headerItems, newCaptionLabel(subtitle))
+	}
+	header := container.NewVBox(headerItems...)
 	body := container.NewVBox(header, content)
 	background := canvas.NewRectangle(theme.Color(theme.ColorNameHeaderBackground))
 	background.CornerRadius = theme.Size(theme.SizeNameCardRadius)
@@ -408,15 +559,15 @@ func (ui *appUI) updateClipLabels(startFrame, endFrame int) {
 	snapshot := ui.engine.snapshot()
 	sampleRate := int(snapshot.format.SampleRate)
 	if sampleRate <= 0 {
-		ui.clipStartLabel.SetText("Start 00.00 s")
-		ui.clipEndLabel.SetText("End 00.00 s")
+		ui.clipStartEntry.SetText("0.00")
+		ui.clipEndEntry.SetText("0.00")
 		ui.clipLengthLabel.SetText("Length 00.00 s")
 		return
 	}
 	start := float64(startFrame) / float64(sampleRate)
 	end := float64(endFrame) / float64(sampleRate)
-	ui.clipStartLabel.SetText(fmt.Sprintf("Start %05.2f s", start))
-	ui.clipEndLabel.SetText(fmt.Sprintf("End %05.2f s", end))
+	ui.clipStartEntry.SetText(fmt.Sprintf("%.2f", start))
+	ui.clipEndEntry.SetText(fmt.Sprintf("%.2f", end))
 	ui.clipLengthLabel.SetText(fmt.Sprintf("Length %05.2f s", end-start))
 }
 
@@ -424,13 +575,32 @@ func (ui *appUI) setClipRange(snapshot audioSnapshot) {
 	minFrames := snapshot.format.SampleRate.N(minClipDuration)
 	maxFrames := snapshot.format.SampleRate.N(maxClipDuration)
 	ui.clipSelector.SetRange(snapshot.totalN, minFrames, maxFrames)
+	ui.clipTimelineEnd.SetText(formatTime(snapshot.duration))
 	if snapshot.totalN < minFrames {
 		ui.clipAvailabilityLabel.SetText("This recording is shorter than the 10-second minimum export length.")
 	} else {
-		ui.clipAvailabilityLabel.SetText("Select any 10–30 seconds from the full recording. The first 5 seconds are dry for comparison.")
+		ui.clipAvailabilityLabel.SetText(fmt.Sprintf("Full recording: %s · first 5 seconds of export are dry for comparison.", formatTime(snapshot.duration)))
 	}
 	startFrame, endFrame := ui.clipSelector.Selection()
 	ui.updateClipLabels(startFrame, endFrame)
+}
+
+func (ui *appUI) previewClipSelection() {
+	if !ui.engine.hasAsset() || ui.loading || ui.exporting.Load() {
+		return
+	}
+	snapshot := ui.engine.snapshot()
+	startFrame, endFrame := ui.clipSelector.Selection()
+	if err := validateClipSelection(snapshot.format, snapshot.totalN, startFrame, endFrame); err != nil {
+		ui.statusLabel.SetText("Choose a valid 10–30 second range to preview.")
+		return
+	}
+	if err := ui.engine.previewSelection(startFrame, endFrame); err != nil {
+		ui.showError(err)
+		return
+	}
+	ui.statusLabel.SetText("Previewing selected range")
+	ui.refreshPlaybackUI()
 }
 
 func (ui *appUI) clipSelectionAvailable(snapshot audioSnapshot) bool {
@@ -557,6 +727,7 @@ func (ui *appUI) loadPath(path string) {
 	ui.loading = true
 	ui.engine.unload()
 	ui.clipSelector.SetRange(0, 0, 0)
+	ui.clipTimelineEnd.SetText("00:00")
 	ui.updateClipLabels(0, 0)
 	ui.fileLabel.SetText(filepath.Base(absolutePath))
 	ui.formatLabel.SetText("Loading…")
@@ -593,6 +764,9 @@ func (ui *appUI) loadPath(path string) {
 				ui.showError(err)
 				ui.refreshPlaybackUI()
 				return
+			}
+			if err := ui.engine.setOutputLevel(ui.outputLevelDB); err != nil {
+				ui.showError(err)
 			}
 
 			ui.loading = false
@@ -812,13 +986,13 @@ func (ui *appUI) loadPresetFile(path string) {
 			}
 			switch preset.Scope {
 			case "hearing-loss":
-				ui.applyHearingLoss(preset.HearingLoss)
+				ui.applyHearingLoss(preset.HearingLoss, preset.Name)
 			case "tinnitus":
-				ui.applyTinnitus(preset.Tinnitus)
+				ui.applyTinnitus(preset.Tinnitus, preset.Name)
 			case "combined":
 				ui.applyPreset(preset.Gains)
-				ui.applyHearingLoss(preset.HearingLoss)
-				ui.applyTinnitus(preset.Tinnitus)
+				ui.applyHearingLoss(preset.HearingLoss, preset.Name)
+				ui.applyTinnitus(preset.Tinnitus, preset.Name)
 			}
 			ui.statusLabel.SetText(fmt.Sprintf("Preset loaded: %s", preset.Name))
 		})
@@ -880,25 +1054,18 @@ func (ui *appUI) applyPreset(gains []float64) {
 	ui.refreshPlaybackUI()
 }
 
-func (ui *appUI) applyTinnitus(preset TinnitusPreset) {
+func (ui *appUI) applyTinnitus(preset TinnitusPreset, name string) {
 	ui.tinnitus = preset
+	ui.tinnitusProfileName = strings.TrimSpace(name)
 	ui.updatingControls = true
 	ui.tinnitusSeveritySlider.SetValue(clamp(preset.Severity, 0, 1))
 	ui.updatingControls = false
-	if preset.Enabled {
-		ui.tinnitusLabel.SetText(fmt.Sprintf("On · %d components · adjust below", len(preset.Components)))
-	} else {
-		ui.tinnitusLabel.SetText("Off · no tinnitus layer")
-	}
-	if ui.engine.hasAsset() {
-		if err := ui.engine.setTinnitus(preset); err != nil {
-			ui.showError(err)
-		}
-	}
+	ui.applyTinnitusSeverity(preset.Severity)
 }
 
-func (ui *appUI) applyHearingLoss(profile HearingLossProfile) {
+func (ui *appUI) applyHearingLoss(profile HearingLossProfile, name string) {
 	ui.hearingLoss = profile
+	ui.hearingProfileName = strings.TrimSpace(name)
 	ui.updatingControls = true
 	ui.severitySlider.SetValue(clamp(profile.Severity, 0, 1))
 	ui.updatingControls = false
@@ -917,7 +1084,15 @@ func (ui *appUI) applyHearingSeverity(severity float64) {
 			ui.sliders[band].SetValue(gain)
 		}
 		ui.updatingControls = false
-		ui.hearingLabel.SetText(fmt.Sprintf("On · %s · %d%% severity", ui.hearingLoss.Type, int(math.Round(severity*100))))
+		profileName := ui.hearingProfileName
+		if profileName == "" {
+			profileName = ui.hearingLoss.Type + " profile"
+		}
+		severityText := fmt.Sprintf("%d%% severity", int(math.Round(severity*100)))
+		if severity == 0 {
+			severityText = "0% · no effect"
+		}
+		ui.hearingLabel.SetText(fmt.Sprintf("%s · %s · %s", profileName, ui.hearingLoss.Type, severityText))
 	} else {
 		ui.hearingLabel.SetText("Off · no hearing-loss profile")
 	}
@@ -937,7 +1112,15 @@ func (ui *appUI) applyTinnitusSeverity(severity float64) {
 	severity = clamp(severity, 0, 1)
 	ui.tinnitus.Severity = severity
 	if ui.tinnitus.Enabled {
-		ui.tinnitusLabel.SetText(fmt.Sprintf("On · %d%% severity · %d components", int(math.Round(severity*100)), len(ui.tinnitus.Components)))
+		severityText := fmt.Sprintf("%d%% severity", int(math.Round(severity*100)))
+		if severity == 0 {
+			severityText = "0% · no effect"
+		}
+		profileName := ui.tinnitusProfileName
+		if profileName == "" {
+			profileName = "Tinnitus profile"
+		}
+		ui.tinnitusLabel.SetText(fmt.Sprintf("%s · %s · %d components", profileName, severityText, len(ui.tinnitus.Components)))
 	} else {
 		ui.tinnitusLabel.SetText("Off · no tinnitus layer")
 	}
@@ -1006,14 +1189,20 @@ func (ui *appUI) refreshPlaybackUI() {
 	}
 	if loaded && !ui.exporting.Load() {
 		ui.clipNameEntry.Enable()
+		ui.clipStartEntry.Enable()
+		ui.clipEndEntry.Enable()
 	} else {
 		ui.exportClipButton.Disable()
 		ui.clipNameEntry.Disable()
+		ui.clipStartEntry.Disable()
+		ui.clipEndEntry.Disable()
 	}
 	if loaded && !ui.exporting.Load() && ui.clipSelectionAvailable(snapshot) {
 		ui.exportClipButton.Enable()
+		ui.previewClipButton.Enable()
 	} else {
 		ui.exportClipButton.Disable()
+		ui.previewClipButton.Disable()
 	}
 
 	if snapshot.duration <= 0 {
@@ -1088,6 +1277,9 @@ func formatFrequency(frequency float64) string {
 }
 
 func formatGain(gain float64) string {
+	if math.Abs(gain) < 0.05 {
+		return "0.0 dB"
+	}
 	return fmt.Sprintf("%+.1f dB", gain)
 }
 

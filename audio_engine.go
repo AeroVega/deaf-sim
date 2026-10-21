@@ -32,6 +32,7 @@ type audioAsset struct {
 	eq          *EqualizerStreamer
 	hearingLoss *hearingLossStreamer
 	tinnitus    *tinnitusStreamer
+	output      *outputLevelStreamer
 	analysis    *analysisTap
 	position    *positionStreamer
 	ctrl        *beep.Ctrl
@@ -76,7 +77,8 @@ func loadAudioAsset(path string) (*audioAsset, error) {
 	eq := NewEqualizerStreamer(source, float64(format.SampleRate))
 	hearingLoss := newHearingLossStreamer(eq, float64(format.SampleRate), HearingLossProfile{})
 	tinnitus := newTinnitusStreamer(hearingLoss, float64(format.SampleRate), TinnitusPreset{})
-	analysis := newAnalysisTap(tinnitus)
+	output := newOutputLevelStreamer(tinnitus, 0)
+	analysis := newAnalysisTap(output)
 	position := &positionStreamer{streamer: analysis}
 	duration := time.Duration(float64(source.Len()) / float64(format.SampleRate) * float64(time.Second))
 
@@ -86,6 +88,7 @@ func loadAudioAsset(path string) (*audioAsset, error) {
 		eq:          eq,
 		hearingLoss: hearingLoss,
 		tinnitus:    tinnitus,
+		output:      output,
 		analysis:    analysis,
 		position:    position,
 		ctrl:        &beep.Ctrl{Streamer: position},
@@ -315,6 +318,7 @@ func (e *audioEngine) play() error {
 		}
 	}
 	asset.ctrl.Paused = false
+	asset.output.FadeIn()
 	speaker.Unlock()
 
 	if e.state == statePaused && !startOver {
@@ -366,6 +370,44 @@ func (e *audioEngine) stop() error {
 	if err != nil {
 		return fmt.Errorf("cannot reset audio: %w", err)
 	}
+	return nil
+}
+
+// previewSelection starts playback at the selected frame and stops at its end.
+func (e *audioEngine) previewSelection(startFrame, endFrame int) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed {
+		return errors.New("audio engine is closed")
+	}
+	if e.asset == nil {
+		return errors.New("load a WAV file before previewing a clip")
+	}
+	asset := e.asset
+	if startFrame < 0 || endFrame <= startFrame || endFrame > asset.source.Len() {
+		return errors.New("clip preview range is outside the recording")
+	}
+
+	e.playbackID++
+	playbackID := e.playbackID
+	speaker.Clear()
+	speaker.Lock()
+	if err := asset.source.Seek(startFrame); err != nil {
+		speaker.Unlock()
+		e.state = stateStopped
+		return fmt.Errorf("cannot seek to the clip start: %w", err)
+	}
+	asset.analysis.Reset()
+	asset.position.SetRange(startFrame, endFrame)
+	asset.ctrl.Paused = false
+	asset.output.FadeIn()
+	speaker.Unlock()
+
+	completion := beep.Callback(func() {
+		e.finished(asset, playbackID)
+	})
+	speaker.Play(beep.Seq(asset.ctrl, completion))
+	e.state = statePlaying
 	return nil
 }
 
@@ -475,6 +517,18 @@ func (e *audioEngine) setGain(band int, gainDB float64) error {
 	gainDB = clamp(gainDB, MinGainDB, MaxGainDB)
 	e.asset.eq.Filters[band][0].UpdateGain(gainDB)
 	e.asset.eq.Filters[band][1].UpdateGain(gainDB)
+	return nil
+}
+
+func (e *audioEngine) setOutputLevel(levelDB float64) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed {
+		return errors.New("audio engine is closed")
+	}
+	if e.asset != nil {
+		e.asset.output.SetLevelDB(levelDB)
+	}
 	return nil
 }
 

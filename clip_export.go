@@ -230,6 +230,9 @@ func exportProcessedWAV(destination io.Writer, sourcePath string, format beep.Fo
 	processedAsset.hearingLoss.Reset()
 	processedAsset.tinnitus.Reset()
 	processedAsset.analysis.Reset()
+	// The playback trim is a listening control; leave exported comparisons at
+	// source level so only the configured hearing profile and EQ affect them.
+	processedAsset.output.setLevelDBImmediate(0)
 	selectedFrames := endFrame - startFrame
 	dryFrames := format.SampleRate.N(5 * time.Second)
 	if dryFrames > selectedFrames {

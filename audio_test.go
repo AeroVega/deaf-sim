@@ -208,6 +208,65 @@ func TestLimitedStreamerStopsAtClipLength(t *testing.T) {
 	}
 }
 
+func TestPositionStreamerStopsAtSelectedRange(t *testing.T) {
+	source := beep.StreamerFunc(func(samples [][2]float64) (int, bool) {
+		for i := range samples {
+			samples[i] = [2]float64{0.25, -0.25}
+		}
+		return len(samples), true
+	})
+	position := &positionStreamer{streamer: source}
+	position.SetRange(10, 15)
+
+	samples := make([][2]float64, 8)
+	if n, ok := position.Stream(samples); n != 5 || ok {
+		t.Fatalf("selected range stream = (%d, %v), want (5, false)", n, ok)
+	}
+	if got := position.Position(); got != 15 {
+		t.Fatalf("Position() = %d, want selected end frame 15", got)
+	}
+	if n, ok := position.Stream(samples); n != 0 || ok {
+		t.Fatalf("stream after selected range = (%d, %v), want (0, false)", n, ok)
+	}
+
+	position.Reset()
+	if got := position.Position(); got != 0 {
+		t.Fatalf("Reset() position = %d, want 0", got)
+	}
+	if n, ok := position.Stream(samples[:3]); n != 3 || !ok {
+		t.Fatalf("stream after reset = (%d, %v), want (3, true)", n, ok)
+	}
+}
+
+func TestOutputLevelStreamerSmoothsAndBoundsLevelChanges(t *testing.T) {
+	source := beep.StreamerFunc(func(samples [][2]float64) (int, bool) {
+		for i := range samples {
+			samples[i] = [2]float64{1, 1}
+		}
+		return len(samples), true
+	})
+	output := newOutputLevelStreamer(source, -12)
+	output.SetLevelDB(6) // Output trim is capped at 0 dB.
+	samples := make([][2]float64, 2048)
+	if n, ok := output.Stream(samples); n != len(samples) || !ok {
+		t.Fatalf("Stream() = (%d, %v), want (%d, true)", n, ok, len(samples))
+	}
+	if samples[0][0] <= 0.25 || samples[0][0] >= samples[len(samples)-1][0] {
+		t.Fatalf("level did not ramp smoothly upward: first=%v last=%v", samples[0][0], samples[len(samples)-1][0])
+	}
+	if samples[len(samples)-1][0] > 1 || samples[len(samples)-1][1] > 1 {
+		t.Fatalf("output exceeded unity after a positive trim request: %v", samples[len(samples)-1])
+	}
+
+	output.FadeIn()
+	if n, ok := output.Stream(samples[:1]); n != 1 || !ok {
+		t.Fatalf("Stream() after FadeIn() = (%d, %v), want (1, true)", n, ok)
+	}
+	if samples[0][0] >= 0.01 {
+		t.Fatalf("fade-in did not start near silence: first sample=%v", samples[0][0])
+	}
+}
+
 func TestNormalizeClipFileName(t *testing.T) {
 	for _, test := range []struct {
 		input string
@@ -327,6 +386,23 @@ func TestExportProcessedWAVStartsWithDryFiveSecondComparison(t *testing.T) {
 	}
 	if _, ok := reference.Stream(processedReference); !ok {
 		t.Fatal("dry reference comparison did not contain audio")
+	}
+	rawAsset, err := loadAudioAsset("assets/audio/speech-podcast.wav")
+	if err != nil {
+		t.Fatalf("could not reopen source recording for export-level comparison: %v", err)
+	}
+	defer rawAsset.close()
+	if err := rawAsset.source.Seek(comparisonFrame); err != nil {
+		t.Fatalf("could not seek source recording: %v", err)
+	}
+	rawSamples := make([][2]float64, 128)
+	if n, ok := rawAsset.source.Stream(rawSamples); n != len(rawSamples) || !ok {
+		t.Fatalf("source comparison stream = (%d, %v), want (%d, true)", n, ok, len(rawSamples))
+	}
+	for i := range processedReference {
+		if math.Abs(processedReference[i][0]-rawSamples[i][0]) > 0.0001 || math.Abs(processedReference[i][1]-rawSamples[i][1]) > 0.0001 {
+			t.Fatalf("playback trim changed neutral export sample %d: exported=%v source=%v", i, processedReference[i], rawSamples[i])
+		}
 	}
 	var difference float64
 	for i := range processedOutput {
