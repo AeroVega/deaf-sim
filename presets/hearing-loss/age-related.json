@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "scope": "hearing-loss",
+  "name": "Age-related high-frequency loss",
+  "description": "Illustrative progressive high-frequency loss often used to explain why speech can sound less clear while low-pitched sounds remain audible.",
+  "frequencies": [31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+  "gains": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  "hearing_loss": {"enabled": true, "type": "sensorineural", "severity": 1, "thresholds_db": [0, 0, 3, 7, 14, 22, 32, 45, 58, 72], "recruitment": 0.8, "selectivity_loss": 0.4}
+}

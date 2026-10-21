@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "scope": "hearing-loss",
+  "name": "Moderate flat sensorineural loss",
+  "description": "Illustrative moderate loss across the spectrum with recruitment and reduced frequency selectivity.",
+  "frequencies": [31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+  "gains": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  "hearing_loss": {"enabled": true, "type": "sensorineural", "severity": 1, "thresholds_db": [42, 42, 42, 42, 42, 42, 42, 42, 42, 42], "recruitment": 0.8, "selectivity_loss": 0.35}
+}

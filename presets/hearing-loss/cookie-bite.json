@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "scope": "hearing-loss",
+  "name": "Cookie-bite mid-frequency loss",
+  "description": "Illustrative mid-frequency dip with better low- and high-frequency sensitivity.",
+  "frequencies": [31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+  "gains": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  "hearing_loss": {"enabled": true, "type": "sensorineural", "severity": 1, "thresholds_db": [5, 5, 8, 18, 32, 42, 35, 20, 8, 5], "recruitment": 0.75, "selectivity_loss": 0.3}
+}

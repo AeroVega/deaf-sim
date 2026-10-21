@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "scope": "tinnitus",
+  "name": "Tinnitus: multitonal whistle",
+  "description": "Educational approximation using several related, gently fluctuating tonal components rather than one sine wave.",
+  "frequencies": [31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+  "gains": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  "tinnitus": {"enabled": true, "severity": 1, "components": [
+    {"type": "tone", "frequency_hz": 2200, "level_dbfs": -58, "modulation_rate_hz": 0.2, "modulation_depth": 0.2, "ear": "both"},
+    {"type": "tone", "frequency_hz": 4700, "level_dbfs": -49, "modulation_rate_hz": 0.8, "modulation_depth": 0.25, "ear": "both"},
+    {"type": "tone", "frequency_hz": 8400, "level_dbfs": -54, "modulation_rate_hz": 0.3, "modulation_depth": 0.5, "ear": "right"}
+  ]}
+}

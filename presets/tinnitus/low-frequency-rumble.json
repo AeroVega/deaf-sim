@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "scope": "tinnitus",
+  "name": "Tinnitus: low-frequency rumble",
+  "description": "Educational approximation of a low rumble with a broad noise bed and slow variation.",
+  "frequencies": [31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+  "gains": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  "tinnitus": {"enabled": true, "severity": 1, "components": [
+    {"type": "tone", "frequency_hz": 95, "level_dbfs": -43, "modulation_rate_hz": 0.17, "modulation_depth": 0.45, "ear": "both"},
+    {"type": "tone", "frequency_hz": 155, "level_dbfs": -48, "modulation_rate_hz": 0.29, "modulation_depth": 0.35, "ear": "both"},
+    {"type": "noise", "frequency_hz": 220, "level_dbfs": -48, "bandwidth_octaves": 1.2, "modulation_rate_hz": 0.12, "modulation_depth": 0.5, "ear": "both"}
+  ]}
+}

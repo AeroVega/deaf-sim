@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "scope": "hearing-loss",
+  "name": "Noise-induced notch (illustrative)",
+  "description": "A 4–6 kHz notch is a common teaching pattern for noise exposure; real audiograms vary and may include distortion.",
+  "frequencies": [31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+  "gains": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  "hearing_loss": {"enabled": true, "type": "sensorineural", "severity": 1, "thresholds_db": [0, 0, 0, 2, 4, 6, 14, 35, 22, 10], "recruitment": 0.8, "selectivity_loss": 0.35}
+}

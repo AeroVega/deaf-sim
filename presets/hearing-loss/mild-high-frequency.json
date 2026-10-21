@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "scope": "hearing-loss",
+  "name": "Mild high-frequency loss",
+  "description": "Illustrative gentle high-frequency slope; this may make consonants and detail less prominent.",
+  "frequencies": [31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+  "gains": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  "hearing_loss": {"enabled": true, "type": "sensorineural", "severity": 1, "thresholds_db": [0, 0, 0, 0, 2, 5, 10, 18, 28, 35], "recruitment": 0.75, "selectivity_loss": 0.25}
+}

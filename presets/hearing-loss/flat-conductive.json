@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "scope": "hearing-loss",
+  "name": "Flat conductive loss",
+  "description": "Illustrative even attenuation across frequencies, useful for contrasting a conductive pattern with a sloping cochlear pattern.",
+  "frequencies": [31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+  "gains": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  "hearing_loss": {"enabled": true, "type": "conductive", "severity": 1, "thresholds_db": [32, 32, 32, 32, 32, 32, 32, 32, 32, 32], "recruitment": 0, "selectivity_loss": 0}
+}

@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "scope": "hearing-loss",
+  "name": "Low-frequency loss",
+  "description": "Illustrative rising audiogram: low-pitched sounds are more attenuated than high-pitched sounds.",
+  "frequencies": [31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+  "gains": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  "hearing_loss": {"enabled": true, "type": "sensorineural", "severity": 1, "thresholds_db": [45, 42, 38, 32, 24, 16, 10, 6, 3, 0], "recruitment": 0.7, "selectivity_loss": 0.2}
+}

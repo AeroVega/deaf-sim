@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "scope": "hearing-loss",
+  "name": "Mixed severe loss (illustrative)",
+  "description": "A strong flat component plus a high-frequency slope; not a clinical prediction of audibility or speech understanding.",
+  "frequencies": [31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+  "gains": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  "hearing_loss": {"enabled": true, "type": "mixed", "severity": 1, "thresholds_db": [55, 55, 58, 62, 68, 74, 82, 90, 98, 105], "recruitment": 0.65, "selectivity_loss": 0.5}
+}

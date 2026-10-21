@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "scope": "hearing-loss",
+  "name": "Reference: neutral",
+  "description": "No EQ attenuation and no tinnitus layer. Use as a reference, not as a claim about any individual listener.",
+  "frequencies": [31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+  "gains": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  "hearing_loss": {"enabled": true, "type": "conductive", "severity": 0, "thresholds_db": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "recruitment": 0, "selectivity_loss": 0}
+}

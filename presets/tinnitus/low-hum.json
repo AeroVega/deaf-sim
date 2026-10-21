@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "scope": "tinnitus",
+  "name": "Tinnitus: low hum with flutter",
+  "description": "Educational approximation of a low-pitched, fluctuating hum; tinnitus quality and pitch differ widely among people.",
+  "frequencies": [31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+  "gains": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  "tinnitus": {
+    "enabled": true,
+    "severity": 1,
+    "components": [
+      {"type": "tone", "frequency_hz": 180, "level_dbfs": -39, "modulation_rate_hz": 1.1, "modulation_depth": 0.65, "ear": "left"},
+      {"type": "tone", "frequency_hz": 240, "level_dbfs": -45, "modulation_rate_hz": 0.8, "modulation_depth": 0.5, "ear": "right"},
+      {"type": "noise", "frequency_hz": 320, "level_dbfs": -50, "bandwidth_octaves": 0.6, "modulation_rate_hz": 0.6, "modulation_depth": 0.4, "ear": "both"}
+    ]
+  }
+}
